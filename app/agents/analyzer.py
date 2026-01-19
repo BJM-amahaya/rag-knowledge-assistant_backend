@@ -78,7 +78,7 @@ def analyze(state: AgentState) -> dict[str,Any]:
     try:
         task = state["original_task"]
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash",
             api_key=settings.GOOGLE_API_KEY,
             temperature=0.0
             )

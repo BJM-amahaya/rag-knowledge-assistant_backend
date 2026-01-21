@@ -6,6 +6,32 @@ from typing import TypedDict, Optional, Any
 from app.config import settings
 import json
 
+SYSTEM_PROMPT = """あなたはタスク分析の専門家です。
+    ユーザーが入力したタスクを分析し、以下の項目を評価してください。
+
+    ## 分析項目
+    1. category: タスクの種類（仕事、勉強、家事、趣味、健康、その他）
+    2. purpose: タスクの目的・最終ゴール
+    3. urgency: 緊急度（高/中/低）
+    4. complexity: 複雑さ（高/中/低）
+    5. key_requirements: 達成に必要な要素のリスト
+    6. constraints: 制約条件のリスト（期限、予算など）
+
+    ## 出力形式
+    必ず以下のJSON形式で出力してください。他の文章は含めないでください。
+
+    {
+    "category": "カテゴリ名",
+    "purpose": "目的の説明",
+    "urgency": "高 or 中 or 低",
+    "complexity": "高 or 中 or 低",
+    "key_requirements": ["要素1", "要素2"],
+    "constraints": ["制約1", "制約2"]
+    }
+    """
+
+
+
 class AgentState(TypedDict):
     original_task:str
     analysis:Optional[dict[str,Any]]
@@ -33,30 +59,6 @@ class AnalysisResult(BaseModel):
         default_factory=list,
         description='制約条件'
 )
-    
-SYSTEM_PROMPT = """あなたはタスク分析の専門家です。
-    ユーザーが入力したタスクを分析し、以下の項目を評価してください。
-
-    ## 分析項目
-    1. category: タスクの種類（仕事、勉強、家事、趣味、健康、その他）
-    2. purpose: タスクの目的・最終ゴール
-    3. urgency: 緊急度（高/中/低）
-    4. complexity: 複雑さ（高/中/低）
-    5. key_requirements: 達成に必要な要素のリスト
-    6. constraints: 制約条件のリスト（期限、予算など）
-
-    ## 出力形式
-    必ず以下のJSON形式で出力してください。他の文章は含めないでください。
-
-    {
-    "category": "カテゴリ名",
-    "purpose": "目的の説明",
-    "urgency": "高 or 中 or 低",
-    "complexity": "高 or 中 or 低",
-    "key_requirements": ["要素1", "要素2"],
-    "constraints": ["制約1", "制約2"]
-    }
-    """
 
 
 def create_user_prompt(task:str) ->str:

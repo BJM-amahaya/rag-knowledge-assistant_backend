@@ -43,8 +43,52 @@ class SubTask(BaseModel):
         description="依存するサブタスクIDのリスト"
     )
 
+class DecompositionResult(BaseModel):
+    subtasks:list[SubTask]=Field(
+        description="分解されたサブタスクのリスト"
+    )
+    total_subtasks:int=Field(
+        description="サブタスクの総数"
+    )
+
+
 def create_user_prompt(task: str, analysis: dict) -> str:
-    # ユーザープロンプト生成
+    complexity = analysis.get("complexity","中")
+    if complexity == "高":
+        split_range = "8~10個"
+    elif complexity == "低":
+        split_range = "3~5個"
+    else:
+        split_range = "5~7個"
+    return f"""以下のタスクを分解してください。
+
+【元のタスク】
+{task}
+
+【分析結果】
+- カテゴリ: {analysis.get('category', '不明')}
+- 目的: {analysis.get('purpose', '不明')}
+- 緊急度: {analysis.get('urgency', '中')}
+- 複雑さ: {complexity}
+- 重要要素: {', '.join(analysis.get('key_requirements', []))}
+- 制約: {', '.join(analysis.get('constraints', []))}
+
+【指示】
+- {split_range}のサブタスクに分解してください
+- 各サブタスクは1〜2時間で完了できる大きさに
+- 依存関係を明確に記載してください
+- JSON形式のみで出力してください
+"""
+
+def parse_decomposition_result(llm_output:str)->DecompositionResult:
+    start = llm_output.find("{")
+    end = llm_output.rfind("}")+1
+
+    if start == -1 or end ==0:
+        raise ValueError("JSONが見つかりません。")
+    json_str = llm_output[start:end]
+    data = json.loads(json_str)
+    return DecompositionResult(**data)
 
 def decompose(state:dict)->dict[str,Any]:
     try:
@@ -58,9 +102,17 @@ def decompose(state:dict)->dict[str,Any]:
         )
 
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT)
+            SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=create_user_prompt(task,analysis))
         ]
+    
+        response = llm.invoke(messages)
+        result = parse_decomposition_result(response.content)
+        return {
+            "subtasks":[st.model_dump()for st in result.subtasks]
+        }
 
-
-    except:
+    except json.JSONDecodeError as e:
+        return {"subtasks": None, "error": f"JSONパースエラー: {e}"}
+    except Exception as e:
+        return {"subtasks": None, "error": f"分解エラー: {e}"}

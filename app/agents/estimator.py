@@ -2,6 +2,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel,Field
 from app.config import settings
+from typing import Any
 import json
 
 SYSTEM_PROMPT = """あなたは時間見積もりの専門家です。
@@ -55,14 +56,57 @@ class EstimatorResult(BaseModel):
         description="サブタスクの総数"
     )
 
-def create_user_prompt(task:str) -> str:
-    return f"""
+def create_user_prompt(task:str,subtasks:list[dict]) -> str:
+    subtask_text = ""
+    for st in subtasks:
+        subtask_text += f"- {st['id']}:{st['title']}\n"
+    return f""" 以下のサブタスクの所要時間を見積もってください。
+## 元のタスク
+{task}
 
+## サブタスク一覧
+{subtask_text}
+
+【指示】
+- 各サブタスクの所要時間を「分」単位で見積もってください
+- confidence（確信度）を設定してください
+- reasoning（根拠）を必ず記載してください
+- JSON形式のみで出力してください
 """
 
+def parse_estimator_result(llm_output:str)->EstimatorResult:
+    start = llm_output.find("{")
+    end = llm_output.rfind("}")+1
+
+    if start == -1 or end ==0:
+        raise ValueError("JSONが見つかりません。")
+    json_str = llm_output[start:end]
+    data = json.loads(json_str)
+    return EstimatorResult(**data)
 
 def estimate(state: dict) -> dict[str,Any]:
     try:
         task=state["original_task"]
-        analysis=state.get("analysis",{})
-    except
+        sub_tasks=state.get("subtasks",[])
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash-preview-04-17",
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=0.0
+        )
+
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=create_user_prompt(task,sub_tasks))
+        ]
+
+        response = llm.invoke(messages)
+        result = parse_estimator_result(response.content)
+        return {
+            "estimates":[st.model_dump()for st in result.estimates],
+            "total_minutes": result.total_minutes 
+        }
+    except json.JSONDecodeError as e:
+        return {"estimates": None, "error": f"JSONパースエラー: {e}"}
+    except Exception as e:
+        return {"estimates": None, "error": f"見積もりエラー: {e}"}

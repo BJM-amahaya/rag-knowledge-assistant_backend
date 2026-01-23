@@ -53,16 +53,16 @@ class PriorityAssignment(BaseModel):
         description="サブタスク固有ID（例: subtask_1）"
     )
     priority: int=Field(
-        description="タスクの優先度"
+        description="優先度(1-5)"
     )
     urgency: str=Field(
-        description="高OR低"
+        description="緊急度(高/低)"
     )
     importance: str=Field(
-        description="高OR低"
+        description="緊急度(高/低)"
     )
     reasoning: str=Field(
-        description="根拠"
+        description="判断理由"
     )
 
 

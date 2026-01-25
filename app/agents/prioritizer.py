@@ -129,4 +129,4 @@ def prioritize(state: dict) -> dict[str,Any]:
     except json.JSONDecodeError as e:
         return {"priorities": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
-        return {"priorities": None, "error": f"見積もりエラー: {e}"}
+        return {"priorities": None, "error": f"優先度エラー: {e}"}

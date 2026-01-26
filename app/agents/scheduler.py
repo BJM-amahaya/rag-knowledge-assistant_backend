@@ -17,7 +17,7 @@ SYSTEM_PROMPT="""あなたはスケジュールの専門家です。
     - 優先度1(最優先) → 早い日時に配置
     - 優先度5(保留) → 後回しまたはスキップ
 
-3. ** 作業時間の反映**
+3. **作業時間の反映**
     - 1日の作業時間: 9:00 ~ 17:00 (8時間)
     - 昼休憩: 12:00 ~ 13:00
     - タスク間の休憩: 10分
@@ -80,10 +80,10 @@ def create_user_prompt(task,subtasks,estimates,priorities) -> str:
         priority = pri["priority"] if pri else "不明"
         deps = st.get("dependencies", [])
 
-        subtask_text += f"- {st["id"]}:{st["title"]}\n"
-        subtask_text += f"- 見積もり: {minutes}分\n"
-        subtask_text += f"- 優先度: {priority}\n"
-        subtask_text += f"- 依存: {deps}\n"
+        subtask_text += f"- {st['id']}:{st['title']}\n"
+        subtask_text += f"  - 見積もり: {minutes}分\n"
+        subtask_text += f"  - 優先度: {priority}\n"
+        subtask_text += f"  - 依存: {deps}\n"
     
     return f"""以下のサブタスクのスケジュールを作成してください。
 ## 元のタスク
@@ -133,6 +133,8 @@ def schedule(state:dict) -> dict[str,Any]:
         result = parse_scheduler_result(response.content)
         return {
                 "schedule":[st.model_dump()for st in result.schedule],
+                "total_days":result.total_days,
+                "warnings":result.warnings
                 }
     except json.JSONDecodeError as e:
         return {"schedule": None, "error": f"JSONパースエラー: {e}"}

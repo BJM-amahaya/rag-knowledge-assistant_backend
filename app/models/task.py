@@ -2,9 +2,17 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any
 from datetime import datetime
 
+class TaskRequest(BaseModel):
+    task:str=Field(
+        description="分析対象のタスク",
+        min_length=1,
+        max_length=500,
+        examples=["ECサイトの開発"]
+        )
+
 class TaskResponse(BaseModel):
     id:str=Field(description="タスクの一意なID")
-    original_task:str=Field(description="タスクの内容")
+    task:str=Field(description="タスクの内容")
     status:str=Field(description="処理ステータス",examples=["completed"])
 
     analysis: Optional[dict[str,Any]] = Field(default=None, description="タスク分析結果")

@@ -1,11 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import tasks
 
 app = FastAPI(
     title="RAG Knowledge Assistant API",
     description="RAGアプリです。",
     version = "1.0.0"
 )
+
+app.include_router(tasks.router)
 
 app.add_middleware(
     CORSMiddleware,

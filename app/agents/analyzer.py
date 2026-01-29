@@ -70,8 +70,11 @@ def parse_analysis_result(llm_output:str) -> AnalysisResult:
 
     start = llm_output.find("{")
     end = llm_output.rfind("}") +1
-    json_str = llm_output[start:end]
 
+    if start== -1 or end == 0:
+        raise ValueError('LLM出力にJSON形式のデータが含まれていません。')
+    
+    json_str = llm_output[start:end]
     data = json.loads(json_str)
     return AnalysisResult(**data)
 

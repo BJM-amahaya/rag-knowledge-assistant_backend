@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import tasks
+from app.api import websocket
 
 app = FastAPI(
     title="RAG Knowledge Assistant API",
@@ -9,6 +10,7 @@ app = FastAPI(
 )
 
 app.include_router(tasks.router)
+app.include_router(websocket.router)
 
 app.add_middleware(
     CORSMiddleware,

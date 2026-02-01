@@ -20,12 +20,16 @@ class ConnectionManager:
     
     async def broadcast(self, task_id: str, message: str):
         if task_id in self.connections:
+            dead_connections = []
             for connection in self.connections[task_id]:
-                print(f'コネクションAMA：{connection}')
-                await connection.send_text(message)
+                try:
+                    await connection.send_text(message)
+                except Exception:
+                    dead_connections.append(connection)
+            
+            for dead in dead_connections:
+                self.connections[task_id].remove(dead)
 
-    async def send_personal_message(self,message:str,websocket:WebSocket):
-        await websocket.send_text(message)
 
 router = APIRouter(tags=["websocket"])
 manager = ConnectionManager()
@@ -36,10 +40,26 @@ async def websocket_endpoint(websocket:WebSocket,task_id:str):
     try:
         while True:
             data = await websocket.receive_text()
-            await manager.send_personal_message(
-                f"受信しました:{data}",
-                websocket
-            )
+            message = json.loads(data)
+
+            if message.get("action") == "start_task":
+                task = message.get("task")
+                async def on_progress(tid: str, chunk: dict):
+                    await manager.broadcast(tid,json.dumps({
+                        "type":"progress",
+                        "data":chunk
+                    }))
+                result = await process_task_streaming(
+                    task_id=task_id,
+                    task=task,
+                    callback=on_progress
+                )
+
+                await manager.broadcast(task_id,json.dumps({
+                    "type":"complete",
+                    "data":result
+                }))
+
     except WebSocketDisconnect:
         manager.disconnect(websocket,task_id)
         print(f"クライアント{task_id}が切断しました。")

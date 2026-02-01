@@ -118,7 +118,7 @@ def schedule(state:dict) -> dict[str,Any]:
         priorities = state.get("priorities",[])
 
         llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash-preview-04-17",
+                model="gemini-2.5-flash",
                 google_api_key=settings.GOOGLE_API_KEY,
                 temperature=0.0
                 

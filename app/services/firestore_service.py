@@ -13,4 +13,7 @@ class FirestoreService:
     def get_all(self) -> list[dict[str, Any]]:
         return list(self._dict.values())
     
+    def delete(self,task_id:str)->Optional[dict[str,Any]]:
+        return self._dict.pop(task_id,None)
+    
 firestore_service = FirestoreService()

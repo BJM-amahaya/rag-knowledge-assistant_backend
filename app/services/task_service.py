@@ -27,3 +27,22 @@ def process_task(request: TaskRequest) -> TaskResponse:
     firestore_service.save(task_id, response.model_dump())
 
     return response
+
+async def process_task_streaming(
+        task_id:str,
+        task:str,
+        callback
+        ):
+    final_state = None
+    async for chunk in agent_graph.astream(
+        {
+        "original_task":task
+        },
+        stream_mode="updates"
+    ):
+        await callback(task_id,chunk)
+        if final_state is None:
+            final_state = chunk
+        else:
+            final_state.update(chunk)
+    return final_state

@@ -96,7 +96,7 @@ def decompose(state:dict)->dict[str,Any]:
         analysis=state.get("analysis",{})
 
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash-preview-04-17",
+            model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.0
         )

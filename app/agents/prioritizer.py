@@ -104,6 +104,16 @@ def parse_prioritizer_result(llm_output:str)->PrioritizerResult:
     data = json.loads(json_str)
     return PrioritizerResult(**data)
 
+PRIORITY_LABELS = {1: "最高", 2: "高", 3: "中", 4: "低", 5: "保留"}
+
+QUADRANT_LABELS = {
+    1: "緊急かつ重要",
+    2: "重要だが緊急でない",
+    3: "緊急だが重要でない",
+    4: "緊急でも重要でもない",
+    5: "保留",
+}
+
 def prioritize(state: dict) -> dict[str,Any]:
     try:
         task=state["original_task"]
@@ -126,7 +136,18 @@ def prioritize(state: dict) -> dict[str,Any]:
         response = llm.invoke(messages)
         result = parse_prioritizer_result(response.content)
         return {
-            "priorities":[st.model_dump()for st in result.priorities],
+            "priorities": [
+                {
+                    **st.model_dump(),
+                    "title": next(
+                        (s["title"] for s in sub_tasks if s["id"] == st.subtask_id),
+                        st.subtask_id,
+                    ),
+                    "priority": PRIORITY_LABELS.get(st.priority, str(st.priority)),
+                    "quadrant": QUADRANT_LABELS.get(st.priority, ""),
+                }
+                for st in result.priorities
+            ],
         }
     except json.JSONDecodeError as e:
         return {"priorities": None, "error": f"JSONパースエラー: {e}"}

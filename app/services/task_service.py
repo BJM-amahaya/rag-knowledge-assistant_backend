@@ -53,4 +53,27 @@ async def process_task_streaming(
         await callback(task_id, error_chunk)
         return error_chunk
     print("[stream] 完了")
+
+    # final_state をフラット化して Firestore に保存
+    if final_state and "error" not in final_state:
+        flat = {}
+        for node_output in final_state.values():
+            if isinstance(node_output, dict):
+                flat.update(node_output)
+
+        response = TaskResponse(
+            id=task_id,
+            task=task,
+            status="completed",
+            analysis=flat.get("analysis"),
+            subtasks=flat.get("subtasks"),
+            estimates=flat.get("estimates"),
+            total_minutes=flat.get("total_minutes"),
+            priorities=flat.get("priorities"),
+            schedule=flat.get("schedule"),
+            total_days=flat.get("total_days"),
+            warnings=flat.get("warnings"),
+        )
+        firestore_service.save(task_id, response.model_dump())
+
     return final_state

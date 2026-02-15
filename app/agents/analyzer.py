@@ -1,10 +1,13 @@
+import json
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel,Field
 from enum import Enum
 from typing import TypedDict, Optional, Any
 from app.config import settings
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """あなたはタスク分析の専門家です。
     ユーザーが入力したタスクを分析し、以下の項目を評価してください。
@@ -86,8 +89,8 @@ def analyze(state: AgentState) -> dict[str,Any]:
             model="gemini-2.5-flash",
             api_key=settings.GOOGLE_API_KEY,
             temperature=0.0,
-            timeout=30,
-            max_retries=1
+            timeout=60,
+            max_retries=3
             )
 
         messages = [
@@ -99,11 +102,13 @@ def analyze(state: AgentState) -> dict[str,Any]:
         return {"analysis": result.model_dump()}
     
     except json.JSONDecodeError as e:
+        logger.error("[analyzer] JSONパースエラー: %s", e, exc_info=True)
         return{
             "analysis": None,
             "error": f"JSON パースエラー: {e}"
         }
     except Exception as e:
+        logger.error("[analyzer] 分析エラー: %s", e, exc_info=True)
         return {
             "analysis": None,
             "error": f"分析エラー: {e}"

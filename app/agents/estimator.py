@@ -1,9 +1,12 @@
+import json
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel,Field
 from app.config import settings
 from typing import Any
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """あなたは時間見積もりの専門家です。
 与えられたサブタスクリストを見て、各タスクの所要時間を予測します。
@@ -87,14 +90,19 @@ def parse_estimator_result(llm_output:str)->EstimatorResult:
 def estimate(state: dict) -> dict[str,Any]:
     try:
         task=state["original_task"]
-        sub_tasks=state.get("subtasks",[])
+        sub_tasks=state.get("subtasks")
+
+        # Nullガード: 前のノード(decomposer)が失敗していたらスキップ
+        if not sub_tasks:
+            logger.warning("[estimator] subtasksがNullのためスキップ")
+            return {"estimates": None, "error": "前段(decomposer)が失敗したためスキップ"}
 
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.0,
-            timeout=30,
-            max_retries=1
+            timeout=60,
+            max_retries=3
         )
 
         messages = [
@@ -109,6 +117,8 @@ def estimate(state: dict) -> dict[str,Any]:
             "total_minutes": result.total_minutes 
         }
     except json.JSONDecodeError as e:
+        logger.error("[estimator] JSONパースエラー: %s", e, exc_info=True)
         return {"estimates": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        logger.error("[estimator] 見積もりエラー: %s", e, exc_info=True)
         return {"estimates": None, "error": f"見積もりエラー: {e}"}

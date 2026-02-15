@@ -1,9 +1,12 @@
+import json
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel,Field
 from app.config import settings
 from typing import Any
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
 あなたは、タスク優先度決定の専門家です。
@@ -117,15 +120,20 @@ QUADRANT_LABELS = {
 def prioritize(state: dict) -> dict[str,Any]:
     try:
         task=state["original_task"]
-        sub_tasks=state.get("subtasks",[])
-        estimates = state.get("estimates", [])
+        sub_tasks=state.get("subtasks")
+        estimates = state.get("estimates")
+
+        # Nullガード: 前のノードが失敗していたらスキップ
+        if not sub_tasks or not estimates:
+            logger.warning("[prioritizer] subtasksまたはestimatesがNullのためスキップ")
+            return {"priorities": None, "error": "前段(decomposer/estimator)が失敗したためスキップ"}
 
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.0,
-            timeout=30,
-            max_retries=1
+            timeout=60,
+            max_retries=3
         )
 
         messages = [
@@ -150,6 +158,8 @@ def prioritize(state: dict) -> dict[str,Any]:
             ],
         }
     except json.JSONDecodeError as e:
+        logger.error("[prioritizer] JSONパースエラー: %s", e, exc_info=True)
         return {"priorities": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        logger.error("[prioritizer] 優先度エラー: %s", e, exc_info=True)
         return {"priorities": None, "error": f"優先度エラー: {e}"}

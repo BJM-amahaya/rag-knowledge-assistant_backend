@@ -1,9 +1,12 @@
+import json
+import logging
 from pydantic import BaseModel, Field
 from typing import Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage,HumanMessage
 from app.config import settings
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT="""あなたはタスク分解の専門家です。
 大きなタスクを、実行可能なサブタスクに分解します。
@@ -93,14 +96,19 @@ def parse_decomposition_result(llm_output:str)->DecompositionResult:
 def decompose(state:dict)->dict[str,Any]:
     try:
         task=state["original_task"]
-        analysis=state.get("analysis",{})
+        analysis=state.get("analysis")
+
+        # Nullガード: 前のノード(analyzer)が失敗していたらスキップ
+        if not analysis:
+            logger.warning("[decomposer] analysisがNullのためスキップ")
+            return {"subtasks": None, "error": "前段(analyzer)が失敗したためスキップ"}
 
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=0.0,
-            timeout=30,
-            max_retries=1
+            timeout=60,
+            max_retries=3
         )
 
         messages = [
@@ -115,6 +123,8 @@ def decompose(state:dict)->dict[str,Any]:
         }
 
     except json.JSONDecodeError as e:
+        logger.error("[decomposer] JSONパースエラー: %s", e, exc_info=True)
         return {"subtasks": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        logger.error("[decomposer] 分解エラー: %s", e, exc_info=True)
         return {"subtasks": None, "error": f"分解エラー: {e}"}

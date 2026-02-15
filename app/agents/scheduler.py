@@ -1,9 +1,12 @@
+import json
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel,Field
 from app.config import settings
 from typing import Any
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT="""あなたはスケジュールの専門家です。
 サブタスクリストを分解して、最適な実行スケジュールを作成します。
@@ -112,18 +115,23 @@ def parse_scheduler_result(llm_output:str)->SchedulerResult:
 def schedule(state:dict) -> dict[str,Any]:
 
     try:
-        print("[scheduler] 開始")
+        logger.info("[scheduler] 開始")
         task = state["original_task"]
-        subtasks = state.get("subtasks",[])
-        estimates = state.get("estimates",[])
-        priorities = state.get("priorities",[])
+        subtasks = state.get("subtasks")
+        estimates = state.get("estimates")
+        priorities = state.get("priorities")
+
+        # Nullガード: 前のノードが失敗していたらスキップ
+        if not subtasks or not estimates or not priorities:
+            logger.warning("[scheduler] subtasks/estimates/prioritiesのいずれかがNullのためスキップ")
+            return {"schedule": None, "error": "前段のエージェントが失敗したためスキップ"}
 
         llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
                 google_api_key=settings.GOOGLE_API_KEY,
                 temperature=0.0,
                 timeout=180,
-                max_retries=1
+                max_retries=3
                 )
 
         messages = [
@@ -131,20 +139,20 @@ def schedule(state:dict) -> dict[str,Any]:
                 HumanMessage(content=create_user_prompt(task,subtasks,estimates,priorities))
                 ]
 
-        print("[scheduler] LLM呼び出し開始")
+        logger.info("[scheduler] LLM呼び出し開始")
         response = llm.invoke(messages)
-        print(f"[scheduler] LLM応答受信: {len(response.content)}文字")
+        logger.info("[scheduler] LLM応答受信: %d文字", len(response.content))
         result = parse_scheduler_result(response.content)
-        print("[scheduler] パース完了")
+        logger.info("[scheduler] パース完了")
         return {
                 "schedule":[st.model_dump()for st in result.schedule],
                 "total_days":result.total_days,
                 "warnings":result.warnings
                 }
     except json.JSONDecodeError as e:
-        print(f"[scheduler] JSONパースエラー: {e}")
+        logger.error("[scheduler] JSONパースエラー: %s", e, exc_info=True)
         return {"schedule": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
-        print(f"[scheduler] エラー: {e}")
+        logger.error("[scheduler] エラー: %s", e, exc_info=True)
         return {"schedule": None, "error": f"スケジューリングエラー: {e}"}
 

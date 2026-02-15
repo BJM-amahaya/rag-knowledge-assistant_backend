@@ -112,6 +112,7 @@ def parse_scheduler_result(llm_output:str)->SchedulerResult:
 def schedule(state:dict) -> dict[str,Any]:
 
     try:
+        print("[scheduler] 開始")
         task = state["original_task"]
         subtasks = state.get("subtasks",[])
         estimates = state.get("estimates",[])
@@ -120,24 +121,30 @@ def schedule(state:dict) -> dict[str,Any]:
         llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
                 google_api_key=settings.GOOGLE_API_KEY,
-                temperature=0.0
-                
+                temperature=0.0,
+                timeout=180,
+                max_retries=1
                 )
-        
+
         messages = [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(content=create_user_prompt(task,subtasks,estimates,priorities))
                 ]
-    
+
+        print("[scheduler] LLM呼び出し開始")
         response = llm.invoke(messages)
+        print(f"[scheduler] LLM応答受信: {len(response.content)}文字")
         result = parse_scheduler_result(response.content)
+        print("[scheduler] パース完了")
         return {
                 "schedule":[st.model_dump()for st in result.schedule],
                 "total_days":result.total_days,
                 "warnings":result.warnings
                 }
     except json.JSONDecodeError as e:
+        print(f"[scheduler] JSONパースエラー: {e}")
         return {"schedule": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        print(f"[scheduler] エラー: {e}")
         return {"schedule": None, "error": f"スケジューリングエラー: {e}"}
 

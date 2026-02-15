@@ -34,15 +34,23 @@ async def process_task_streaming(
         callback
         ):
     final_state = None
-    async for chunk in agent_graph.astream(
-        {
-        "original_task":task
-        },
-        stream_mode="updates"
-    ):
-        await callback(task_id,chunk)
-        if final_state is None:
-            final_state = chunk
-        else:
-            final_state.update(chunk)
+    try:
+        async for chunk in agent_graph.astream(
+            {
+            "original_task":task
+            },
+            stream_mode="updates"
+        ):
+            print(f"[stream] チャンク受信: {list(chunk.keys())}")
+            await callback(task_id,chunk)
+            if final_state is None:
+                final_state = chunk
+            else:
+                final_state.update(chunk)
+    except Exception as e:
+        print(f"[stream] エラー: {e}")
+        error_chunk = {"error": str(e)}
+        await callback(task_id, error_chunk)
+        return error_chunk
+    print("[stream] 完了")
     return final_state

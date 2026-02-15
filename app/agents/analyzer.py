@@ -85,7 +85,9 @@ def analyze(state: AgentState) -> dict[str,Any]:
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             api_key=settings.GOOGLE_API_KEY,
-            temperature=0.0
+            temperature=0.0,
+            timeout=30,
+            max_retries=1
             )
 
         messages = [

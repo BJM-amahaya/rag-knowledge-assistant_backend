@@ -5,6 +5,6 @@ from app.config import settings
 def get_embeddings() -> GoogleGenerativeAIEmbeddings:
     """Google Generative AI Embeddingsインスタンスを返す。"""
     return GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
+        model="models/gemini-embedding-001",
         google_api_key=settings.GOOGLE_API_KEY,
     )

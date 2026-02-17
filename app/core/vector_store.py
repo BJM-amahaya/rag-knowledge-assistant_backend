@@ -19,6 +19,14 @@ def add_documents(docs: list[Document]) -> None:
     store.add_documents(docs)
 
 
+def delete_by_doc_id(doc_id: str) -> None:
+    """指定された doc_id に紐づくチャンクをベクトルストアから削除する。"""
+    store = get_vector_store()
+    results = store.get(where={"doc_id": doc_id})
+    if results["ids"]:
+        store.delete(ids=results["ids"])
+
+
 def search(query: str, k: int = 3) -> list[Document]:
     """クエリに類似するドキュメントを検索する。"""
     store = get_vector_store()

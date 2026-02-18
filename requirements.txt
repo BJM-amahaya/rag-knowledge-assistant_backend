@@ -25,3 +25,6 @@ pydantic-settings>=2.6.0
 # ===== ファイル処理 =====
 python-multipart>=0.0.18
 pypdf>=5.0.0
+
+# ===== リトライ処理 =====
+tenacity>=8.2.0

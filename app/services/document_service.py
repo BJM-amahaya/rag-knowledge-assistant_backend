@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
+from app.config import settings
 from app.core.chunker import split_documents
 from app.core.document_loader import load_document
 from app.core.vector_store import add_documents, delete_by_doc_id
@@ -56,7 +57,11 @@ def process_upload(file: UploadFile) -> Document:
             raise HTTPException(status_code=400, detail="PDFからテキストを抽出できませんでした")
 
         # 5. チャンク分割
-        chunks = split_documents(documents)
+        chunks = split_documents(
+            documents,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
 
         # 6. 各チャンクに doc_id を埋め込む
         for chunk in chunks:

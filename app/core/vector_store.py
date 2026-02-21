@@ -1,4 +1,5 @@
 import logging
+import time
 
 from google.api_core.exceptions import ResourceExhausted
 from langchain_core.documents import Document
@@ -19,22 +20,26 @@ logger = logging.getLogger(__name__)
 PERSIST_DIR = "./chroma_data"
 
 # --- リトライ設定 ---
-BATCH_SIZE = 50          # 1バッチあたりのチャンク数
+BATCH_SIZE = 20          # 1バッチあたりのチャンク数
 MAX_RETRIES = 5          # 最大リトライ回数
 WAIT_MIN = 4             # 最小待機秒数
 WAIT_MAX = 120           # 最大待機秒数
+BATCH_DELAY = 2          # バッチ間の待機秒数（レート制限回避用）
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
     """429 (Rate Limit) エラーかどうかを判定する。"""
-    return isinstance(exc, ResourceExhausted)
+    if isinstance(exc, ResourceExhausted):
+        return True
+    # LangChainが例外をラップしている場合、メッセージで判定
+    return "RESOURCE_EXHAUSTED" in str(exc) or "429" in str(exc)
 
 
-def get_vector_store() -> Chroma:
+def get_vector_store(task_type: str = "RETRIEVAL_DOCUMENT") -> Chroma:
     """Chromaベクトルストアのインスタンスを取得する。"""
     return Chroma(
         persist_directory=PERSIST_DIR,
-        embedding_function=get_embeddings(),
+        embedding_function=get_embeddings(task_type=task_type),
     )
 
 
@@ -63,6 +68,10 @@ def add_documents(docs: list[Document]) -> None:
 
     for idx, batch in enumerate(batches, start=1):
         _add_batch(store, batch, idx, total)
+        # 最後のバッチ以外は待機してレート制限を回避
+        if idx < total:
+            logger.info(f"レート制限回避のため {BATCH_DELAY} 秒待機中...")
+            time.sleep(BATCH_DELAY)
 
     logger.info(f"全 {total} バッチの処理が完了しました")
 
@@ -77,5 +86,5 @@ def delete_by_doc_id(doc_id: str) -> None:
 
 def search(query: str, k: int = settings.search_k) -> list[Document]:
     """クエリに類似するドキュメントを検索する。"""
-    store = get_vector_store()
+    store = get_vector_store(task_type="RETRIEVAL_QUERY")
     return store.similarity_search(query, k=k)

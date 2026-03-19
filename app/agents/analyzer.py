@@ -1,8 +1,8 @@
 import json
 import logging
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel,Field
+from pydantic import BaseModel, Field
 from enum import Enum
 from typing import TypedDict, Optional, Any
 from app.config import settings
@@ -36,10 +36,10 @@ SYSTEM_PROMPT = """あなたはタスク分析の専門家です。
 
 
 class AgentState(TypedDict):
-    original_task:str
-    analysis:Optional[dict[str,Any]]
+    original_task: str
+    analysis: Optional[dict[str, Any]]
 
-class UrgencyLevel(str,Enum):
+class UrgencyLevel(str, Enum):
     HIGH = "高"
     MEDIUM = "中"
     LOW = "低"
@@ -54,56 +54,56 @@ class AnalysisResult(BaseModel):
     purpose: str = Field(description='このタスクの目的・ゴール')
     urgency: UrgencyLevel = Field(description='緊急度')
     complexity: ComplexityLevel = Field(description='複雑さ')
-    key_requirements:list[str] =Field(
+    key_requirements: list[str] = Field(
         default_factory=list,
         description='主要要素'
     )
-    constraints:list[str] =Field(
+    constraints: list[str] = Field(
         default_factory=list,
         description='制約条件'
-)
+    )
 
 
-def create_user_prompt(task:str) ->str:
+def create_user_prompt(task: str) -> str:
     return f"""以下のタスクを分析してください。
     タスク: {task}
     JSON形式で分析結果を出力してください。"""
 
-def parse_analysis_result(llm_output:str) -> AnalysisResult:
-
+def parse_analysis_result(llm_output: str) -> AnalysisResult:
     start = llm_output.find("{")
-    end = llm_output.rfind("}") +1
+    end = llm_output.rfind("}") + 1
 
-    if start== -1 or end == 0:
+    if start == -1 or end == 0:
         raise ValueError('LLM出力にJSON形式のデータが含まれていません。')
-    
+
     json_str = llm_output[start:end]
     data = json.loads(json_str)
     return AnalysisResult(**data)
 
 
-def analyze(state: AgentState) -> dict[str,Any]:
+def analyze(state: AgentState) -> dict[str, Any]:
     try:
         task = state["original_task"]
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            api_key=settings.GOOGLE_API_KEY,
-            temperature=0.0,
-            timeout=60,
-            max_retries=3
-            )
+        llm = ChatBedrock(
+            model_id=settings.BEDROCK_MODEL_ID,
+            region_name=settings.AWS_REGION,
+            model_kwargs={
+                "max_tokens": 2000,
+                "temperature": 0.0,
+            },
+        )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=create_user_prompt(task)),
-            ]
+        ]
         response = llm.invoke(messages)
         result = parse_analysis_result(response.content)
         return {"analysis": result.model_dump()}
-    
+
     except json.JSONDecodeError as e:
         logger.error("[analyzer] JSONパースエラー: %s", e, exc_info=True)
-        return{
+        return {
             "analysis": None,
             "error": f"JSON パースエラー: {e}"
         }

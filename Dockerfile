@@ -14,7 +14,7 @@ WORKDIR /app
 # (一部のPythonパッケージのビルドに必要)
 # ──────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
 # ──────────────────────────────────────────
@@ -36,10 +36,9 @@ COPY . .
 
 # ──────────────────────────────────────────
 # 永続化用ディレクトリを作成
-# uploads/  : アップロードされたPDFの保存先
-# chroma_data/ : ベクトルDBのデータ保存先
+# uploads/ : メタデータ(metadata.json)の保存先
 # ──────────────────────────────────────────
-RUN mkdir -p uploads chroma_data
+RUN mkdir -p uploads
 
 # ──────────────────────────────────────────
 # コンテナが使うポート番号を宣言

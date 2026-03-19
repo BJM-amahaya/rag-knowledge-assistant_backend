@@ -2,13 +2,13 @@ import json
 import logging
 from pydantic import BaseModel, Field
 from typing import Any
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage,HumanMessage
+from langchain_aws import ChatBedrock
+from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT="""あなたはタスク分解の専門家です。
+SYSTEM_PROMPT = """あなたはタスク分解の専門家です。
 大きなタスクを、実行可能なサブタスクに分解します。
 
 ## 分解のルール
@@ -32,31 +32,31 @@ SYSTEM_PROMPT="""あなたはタスク分解の専門家です。
     """
 
 class SubTask(BaseModel):
-    id:str=Field(
+    id: str = Field(
         description="サブタスク固有ID（例: subtask_1）"
     )
-    title:str=Field(
+    title: str = Field(
         description="サブタスク名（短く明確に）"
     )
-    description:str=Field(
+    description: str = Field(
         description="詳細な説明"
     )
-    dependencies:list[str]=Field(
+    dependencies: list[str] = Field(
         default_factory=list,
         description="依存するサブタスクIDのリスト"
     )
 
 class DecompositionResult(BaseModel):
-    subtasks:list[SubTask]=Field(
+    subtasks: list[SubTask] = Field(
         description="分解されたサブタスクのリスト"
     )
-    total_subtasks:int=Field(
+    total_subtasks: int = Field(
         description="サブタスクの総数"
     )
 
 
 def create_user_prompt(task: str, analysis: dict) -> str:
-    complexity = analysis.get("complexity","中")
+    complexity = analysis.get("complexity", "中")
     if complexity == "高":
         split_range = "8~10個"
     elif complexity == "低":
@@ -83,43 +83,44 @@ def create_user_prompt(task: str, analysis: dict) -> str:
 - JSON形式のみで出力してください
 """
 
-def parse_decomposition_result(llm_output:str)->DecompositionResult:
+def parse_decomposition_result(llm_output: str) -> DecompositionResult:
     start = llm_output.find("{")
-    end = llm_output.rfind("}")+1
+    end = llm_output.rfind("}") + 1
 
-    if start == -1 or end ==0:
+    if start == -1 or end == 0:
         raise ValueError("JSONが見つかりません。")
     json_str = llm_output[start:end]
     data = json.loads(json_str)
     return DecompositionResult(**data)
 
-def decompose(state:dict)->dict[str,Any]:
+def decompose(state: dict) -> dict[str, Any]:
     try:
-        task=state["original_task"]
-        analysis=state.get("analysis")
+        task = state["original_task"]
+        analysis = state.get("analysis")
 
         # Nullガード: 前のノード(analyzer)が失敗していたらスキップ
         if not analysis:
             logger.warning("[decomposer] analysisがNullのためスキップ")
             return {"subtasks": None, "error": "前段(analyzer)が失敗したためスキップ"}
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature=0.0,
-            timeout=60,
-            max_retries=3
+        llm = ChatBedrock(
+            model_id=settings.BEDROCK_MODEL_ID,
+            region_name=settings.AWS_REGION,
+            model_kwargs={
+                "max_tokens": 2000,
+                "temperature": 0.0,
+            },
         )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=create_user_prompt(task,analysis))
+            HumanMessage(content=create_user_prompt(task, analysis))
         ]
-    
+
         response = llm.invoke(messages)
         result = parse_decomposition_result(response.content)
         return {
-            "subtasks":[st.model_dump()for st in result.subtasks]
+            "subtasks": [st.model_dump() for st in result.subtasks]
         }
 
     except json.JSONDecodeError as e:

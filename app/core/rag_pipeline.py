@@ -1,5 +1,6 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_aws import ChatBedrock
 from langchain_core.messages import SystemMessage, HumanMessage
+
 from app.config import settings
 from app.core.vector_store import search
 
@@ -14,16 +15,19 @@ SYSTEM_PROMPT = """あなたはナレッジアシスタントです。
 
 
 def generate_answer(query: str, k: int = settings.search_k) -> dict:
-    """質問を受け取り、ベクトル検索→Geminiで回答を生成する。"""
-    # 1. ベクトル検索で関連ドキュメントを取得
+    """質問を受け取り、Bedrock KB検索→Bedrock Claudeで回答を生成する。"""
+    # 1. Bedrock Knowledge Base で関連ドキュメントを取得
     docs = search(query, k=k)
     context = "\n\n".join(doc.page_content for doc in docs)
 
-    # 2. LLM で回答生成
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        api_key=settings.GOOGLE_API_KEY,
-        temperature=0.0,
+    # 2. Bedrock Claude で回答生成
+    llm = ChatBedrock(
+        model_id=settings.BEDROCK_MODEL_ID,
+        region_name=settings.AWS_REGION,
+        model_kwargs={
+            "max_tokens": 2000,
+            "temperature": 0.0,
+        },
     )
 
     messages = [

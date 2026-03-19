@@ -1,22 +1,29 @@
 import json
 import logging
-import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
 
+import boto3
 from fastapi import HTTPException, UploadFile
 
 from app.config import settings
-from app.core.chunker import split_documents
-from app.core.document_loader import load_document
-from app.core.vector_store import add_documents, delete_by_doc_id
 from app.models.document import Document
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path("uploads")
-METADATA_FILE = UPLOAD_DIR / "metadata.json"
+METADATA_DIR = Path("uploads")
+METADATA_FILE = METADATA_DIR / "metadata.json"
+
+
+def _get_s3_client():
+    """S3クライアントを取得する。"""
+    return boto3.client("s3", region_name=settings.AWS_REGION)
+
+
+def _get_bedrock_agent_client():
+    """Bedrock Agentクライアントを取得する。"""
+    return boto3.client("bedrock-agent", region_name=settings.AWS_REGION)
 
 
 def _load_metadata() -> dict:
@@ -29,65 +36,73 @@ def _load_metadata() -> dict:
 
 def _save_metadata(metadata: dict) -> None:
     """metadata.json を保存する。"""
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    METADATA_DIR.mkdir(exist_ok=True)
     with open(METADATA_FILE, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
 
+def _sync_knowledge_base() -> None:
+    """Bedrock Knowledge Base の同期（Ingestion Job）をトリガーする。"""
+    try:
+        client = _get_bedrock_agent_client()
+        response = client.start_ingestion_job(
+            knowledgeBaseId=settings.BEDROCK_KB_ID,
+            dataSourceId=settings.BEDROCK_DATA_SOURCE_ID,
+        )
+        job_id = response["ingestionJob"]["ingestionJobId"]
+        logger.info("KB同期ジョブ開始: %s", job_id)
+    except Exception as e:
+        logger.error("KB同期トリガーに失敗: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Knowledge Base の同期に失敗しました: {e}",
+        )
+
+
 def process_upload(file: UploadFile) -> Document:
-    """PDFをアップロードし、ベクトルストアに登録する。"""
+    """PDFをS3にアップロードし、Bedrock KBの同期をトリガーする。"""
 
     # 1. PDFかどうかチェック
     if not file.filename or not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDFファイルのみアップロード可能です")
-
-    # 2. uploads/ ディレクトリにファイル保存
-    UPLOAD_DIR.mkdir(exist_ok=True)
-    file_path = UPLOAD_DIR / file.filename
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # 3. UUID生成（チャンクへの埋め込みとメタデータ保存に使う）
-    doc_id = str(uuid.uuid4())
-
-    try:
-        # 4. テキスト抽出
-        documents = load_document(str(file_path))
-        if not documents:
-            raise HTTPException(status_code=400, detail="PDFからテキストを抽出できませんでした")
-
-        # 5. チャンク分割
-        chunks = split_documents(
-            documents,
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
+        raise HTTPException(
+            status_code=400, detail="PDFファイルのみアップロード可能です"
         )
 
-        # 6. 各チャンクに doc_id を埋め込む
-        for chunk in chunks:
-            chunk.metadata["doc_id"] = doc_id
+    # 2. UUID生成
+    doc_id = str(uuid.uuid4())
 
-        # 7. ベクトルストアに登録
-        add_documents(chunks)
-        logger.info("ドキュメント登録完了: %s (%d チャンク)", file.filename, len(chunks))
-
-        # 8. metadata.json に保存
-        uploaded_at = datetime.now().strftime("%Y-%m-%d")
-        metadata = _load_metadata()
-        metadata[doc_id] = {
-            "name": file.filename,
-            "uploadedAt": uploaded_at,
-            "filePath": str(file_path),
-        }
-        _save_metadata(metadata)
-
-    except HTTPException:
-        raise
+    # 3. S3にアップロード
+    s3_key = f"documents/{doc_id}/{file.filename}"
+    try:
+        s3 = _get_s3_client()
+        s3.upload_fileobj(
+            file.file,
+            settings.S3_DOCUMENTS_BUCKET,
+            s3_key,
+            ExtraArgs={"ContentType": "application/pdf"},
+        )
+        logger.info("S3アップロード完了: s3://%s/%s", settings.S3_DOCUMENTS_BUCKET, s3_key)
     except Exception as e:
-        logger.error("ドキュメント処理中にエラー: %s", e)
-        raise HTTPException(status_code=400, detail=f"ドキュメントの処理に失敗しました: {e}")
+        logger.error("S3アップロードエラー: %s", e)
+        raise HTTPException(
+            status_code=500, detail=f"S3へのアップロードに失敗しました: {e}"
+        )
 
-    # 9. ドキュメント情報を返す
+    # 4. Bedrock KB 同期トリガー
+    _sync_knowledge_base()
+
+    # 5. metadata.json に保存
+    uploaded_at = datetime.now().strftime("%Y-%m-%d")
+    metadata = _load_metadata()
+    metadata[doc_id] = {
+        "name": file.filename,
+        "uploadedAt": uploaded_at,
+        "s3Key": s3_key,
+    }
+    _save_metadata(metadata)
+
+    logger.info("ドキュメント登録完了: %s (id=%s)", file.filename, doc_id)
+
     return Document(
         id=doc_id,
         name=file.filename,
@@ -105,7 +120,7 @@ def get_all_documents() -> list[Document]:
 
 
 def delete_document(doc_id: str) -> Document:
-    """ドキュメントを削除する（metadata + Chroma + PDFファイル）。"""
+    """ドキュメントを削除する（metadata + S3）。"""
     metadata = _load_metadata()
 
     if doc_id not in metadata:
@@ -113,13 +128,24 @@ def delete_document(doc_id: str) -> Document:
 
     doc_info = metadata[doc_id]
 
-    # 1. Chroma からチャンク削除
-    delete_by_doc_id(doc_id)
+    # 1. S3 からファイル削除
+    s3_key = doc_info.get("s3Key")
+    if s3_key:
+        try:
+            s3 = _get_s3_client()
+            s3.delete_object(
+                Bucket=settings.S3_DOCUMENTS_BUCKET,
+                Key=s3_key,
+            )
+            logger.info("S3ファイル削除完了: %s", s3_key)
+        except Exception as e:
+            logger.warning("S3ファイル削除に失敗: %s", e)
 
-    # 2. PDFファイル削除
-    file_path = Path(doc_info["filePath"])
-    if file_path.exists():
-        file_path.unlink()
+    # 2. KB 再同期（削除を反映）
+    try:
+        _sync_knowledge_base()
+    except Exception as e:
+        logger.warning("削除後のKB同期に失敗: %s", e)
 
     # 3. metadata.json から削除
     deleted = metadata.pop(doc_id)

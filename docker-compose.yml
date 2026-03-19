@@ -20,11 +20,9 @@ services:
     env_file:
       - .env
 
-    # ボリュームマウント（データの永続化）
-    # コンテナを削除してもデータが消えないようにする
+    # ボリュームマウント（メタデータの永続化）
     volumes:
-      - upload_data:/app/uploads
-      - chroma_data:/app/chroma_data
+      - upload_metadata:/app/uploads
 
     # ヘルスチェック設定
     # コンテナが正常に動いているか定期的に確認する
@@ -42,5 +40,4 @@ services:
 # 名前付きボリューム（データ保存場所）
 # ─────────────────────────────────────
 volumes:
-  upload_data:      # PDFファイルの保存
-  chroma_data:      # ベクトルDBのデータ
+  upload_metadata:    # メタデータ(metadata.json)の保存

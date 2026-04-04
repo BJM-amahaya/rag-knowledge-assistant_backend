@@ -21,6 +21,15 @@ def _get_s3_client():
     return boto3.client("s3", region_name=settings.AWS_REGION)
 
 
+def _get_dynamodb_table():
+    """DynamoDB テーブルオブジェクトを返す。未設定なら None"""
+    table_name = settings.DYNAMODB_DOCUMENTS_TABLE
+    if not table_name:
+        return None
+    dynamodb = boto3.resource("dynamodb", region_name=settings.AWS_REGION)
+    return dynamodb.Table(table_name)
+
+
 def _get_bedrock_agent_client():
     """Bedrock Agentクライアントを取得する。"""
     return boto3.client("bedrock-agent", region_name=settings.AWS_REGION)
@@ -91,15 +100,26 @@ def process_upload(file: UploadFile) -> Document:
     # 4. Bedrock KB 同期トリガー
     _sync_knowledge_base()
 
-    # 5. metadata.json に保存
+    # 5. メタデータを保存
     uploaded_at = datetime.now().strftime("%Y-%m-%d")
-    metadata = _load_metadata()
-    metadata[doc_id] = {
-        "name": file.filename,
-        "uploadedAt": uploaded_at,
-        "s3Key": s3_key,
-    }
-    _save_metadata(metadata)
+    table = _get_dynamodb_table()
+    if table:
+        # DynamoDB に保存
+        table.put_item(Item={
+            "docId": doc_id,
+            "name": file.filename,
+            "uploadedAt": uploaded_at,
+            "s3Key": s3_key,
+        })
+    else:
+        # フォールバック: ファイルに保存（ローカル開発用）
+        metadata = _load_metadata()
+        metadata[doc_id] = {
+            "name": file.filename,
+            "uploadedAt": uploaded_at,
+            "s3Key": s3_key,
+        }
+        _save_metadata(metadata)
 
     logger.info("ドキュメント登録完了: %s (id=%s)", file.filename, doc_id)
 
@@ -112,45 +132,89 @@ def process_upload(file: UploadFile) -> Document:
 
 def get_all_documents() -> list[Document]:
     """登録済み全ドキュメントを返す。"""
-    metadata = _load_metadata()
-    return [
-        Document(id=doc_id, name=info["name"], uploadedAt=info["uploadedAt"])
-        for doc_id, info in metadata.items()
-    ]
+    table = _get_dynamodb_table()
+    if table:
+        # DynamoDB からすべて取得
+        response = table.scan()
+        items = response.get("Items", [])
+        return [
+            Document(id=item["docId"], name=item["name"], uploadedAt=item["uploadedAt"])
+            for item in items
+        ]
+    else:
+        # フォールバック: ファイルから読み込み
+        metadata = _load_metadata()
+        return [
+            Document(id=doc_id, name=info["name"], uploadedAt=info["uploadedAt"])
+            for doc_id, info in metadata.items()
+        ]
 
 
 def delete_document(doc_id: str) -> Document:
     """ドキュメントを削除する（metadata + S3）。"""
-    metadata = _load_metadata()
+    table = _get_dynamodb_table()
+    if table:
+        # DynamoDB から取得して削除
+        response = table.get_item(Key={"docId": doc_id})
+        item = response.get("Item")
+        if not item:
+            raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
 
-    if doc_id not in metadata:
-        raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
+        # 1. S3 からファイル削除
+        s3_key = item.get("s3Key")
+        if s3_key:
+            try:
+                s3 = _get_s3_client()
+                s3.delete_object(
+                    Bucket=settings.S3_DOCUMENTS_BUCKET,
+                    Key=s3_key,
+                )
+                logger.info("S3ファイル削除完了: %s", s3_key)
+            except Exception as e:
+                logger.warning("S3ファイル削除に失敗: %s", e)
 
-    doc_info = metadata[doc_id]
-
-    # 1. S3 からファイル削除
-    s3_key = doc_info.get("s3Key")
-    if s3_key:
+        # 2. KB 再同期（削除を反映）
         try:
-            s3 = _get_s3_client()
-            s3.delete_object(
-                Bucket=settings.S3_DOCUMENTS_BUCKET,
-                Key=s3_key,
-            )
-            logger.info("S3ファイル削除完了: %s", s3_key)
+            _sync_knowledge_base()
         except Exception as e:
-            logger.warning("S3ファイル削除に失敗: %s", e)
+            logger.warning("削除後のKB同期に失敗: %s", e)
 
-    # 2. KB 再同期（削除を反映）
-    try:
-        _sync_knowledge_base()
-    except Exception as e:
-        logger.warning("削除後のKB同期に失敗: %s", e)
+        # 3. DynamoDB から削除
+        table.delete_item(Key={"docId": doc_id})
+        logger.info("ドキュメント削除完了: %s (id=%s)", item["name"], doc_id)
+        return Document(id=doc_id, name=item["name"], uploadedAt=item["uploadedAt"])
+    else:
+        # フォールバック: ファイルから削除
+        metadata = _load_metadata()
 
-    # 3. metadata.json から削除
-    deleted = metadata.pop(doc_id)
-    _save_metadata(metadata)
+        if doc_id not in metadata:
+            raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
 
-    logger.info("ドキュメント削除完了: %s (id=%s)", deleted["name"], doc_id)
+        doc_info = metadata[doc_id]
 
-    return Document(id=doc_id, name=deleted["name"], uploadedAt=deleted["uploadedAt"])
+        # 1. S3 からファイル削除
+        s3_key = doc_info.get("s3Key")
+        if s3_key:
+            try:
+                s3 = _get_s3_client()
+                s3.delete_object(
+                    Bucket=settings.S3_DOCUMENTS_BUCKET,
+                    Key=s3_key,
+                )
+                logger.info("S3ファイル削除完了: %s", s3_key)
+            except Exception as e:
+                logger.warning("S3ファイル削除に失敗: %s", e)
+
+        # 2. KB 再同期（削除を反映）
+        try:
+            _sync_knowledge_base()
+        except Exception as e:
+            logger.warning("削除後のKB同期に失敗: %s", e)
+
+        # 3. metadata.json から削除
+        deleted = metadata.pop(doc_id)
+        _save_metadata(metadata)
+
+        logger.info("ドキュメント削除完了: %s (id=%s)", deleted["name"], doc_id)
+
+        return Document(id=doc_id, name=deleted["name"], uploadedAt=deleted["uploadedAt"])

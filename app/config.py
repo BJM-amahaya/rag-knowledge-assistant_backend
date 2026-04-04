@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     S3_DOCUMENTS_BUCKET: str = ""
     BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-4-20250514"
 
+    # DynamoDB設定
+    DYNAMODB_DOCUMENTS_TABLE: str = ""   # ドキュメント管理テーブル
+    DYNAMODB_TASKS_TABLE: str = ""       # タスク管理テーブル
+    DYNAMODB_CONNECTIONS_TABLE: str = "" # WebSocket接続管理テーブル
+
     debug: bool = False
 
     # RAGパラメータ

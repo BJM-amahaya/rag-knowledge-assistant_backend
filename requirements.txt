@@ -22,3 +22,7 @@ pypdf>=5.0.0
 
 # ===== グラフ =====
 langgraph>=0.2.0
+
+# ===== Lambda対応 =====
+mangum                       # Lambda ⇔ ASGI 変換
+python-jose[cryptography]    # JWT 検証（Cognito トークン）

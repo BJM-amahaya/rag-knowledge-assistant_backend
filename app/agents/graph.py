@@ -17,6 +17,7 @@ class  AgentState(TypedDict):
     schedule:Optional[list[dict[str,Any]]]
     total_days:Optional[int]
     warnings:Optional[list[str]]
+    error:Optional[str]
 
 def create_agent_graph():
     builder = StateGraph(AgentState)

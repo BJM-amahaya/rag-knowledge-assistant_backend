@@ -1,9 +1,12 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
+import json
+import logging
+from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel,Field
+from pydantic import BaseModel, Field
 from app.config import settings
 from typing import Any
-import json
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """あなたは時間見積もりの専門家です。
 与えられたサブタスクリストを見て、各タスクの所要時間を予測します。
@@ -21,42 +24,42 @@ SYSTEM_PROMPT = """あなたは時間見積もりの専門家です。
 
 ## 出力形式
 必ず以下のJSON形式で出力して下さい。他の文章は含めないで下さい。
-{                                                                                                                                           
-    "estimates": [                                                                                                                          
-        {                                                                                                                                   
-            "subtask_id": "subtask_1",                                                                                                      
-            "estimated_minutes": 30,                                                                                                        
-            "confidence": "高",                                                                                                             
-            "reasoning": "単純な構成検討のため"                                                                                             
-        }                                                                                                                                   
-    ],                                                                                                                                      
-    "total_minutes": 30                                                                                                                     
+{
+    "estimates": [
+        {
+            "subtask_id": "subtask_1",
+            "estimated_minutes": 30,
+            "confidence": "高",
+            "reasoning": "単純な構成検討のため"
+        }
+    ],
+    "total_minutes": 30
 }
 """
 class TimeEstimate(BaseModel):
-    subtask_id: str=Field(
+    subtask_id: str = Field(
         description="サブタスク固有ID（例: subtask_1）"
     )
-    estimated_minutes: int=Field(
+    estimated_minutes: int = Field(
         description="タスクの所要時間"
     )
-    confidence: str=Field(
+    confidence: str = Field(
         description="確信度"
     )
-    reasoning: str=Field(
+    reasoning: str = Field(
         description="根拠"
     )
 
 
 class EstimatorResult(BaseModel):
-    estimates:list[TimeEstimate]=Field(
+    estimates: list[TimeEstimate] = Field(
         description="分解されたサブタスク"
     )
-    total_minutes:int=Field(
+    total_minutes: int = Field(
         description="サブタスクの総数"
     )
 
-def create_user_prompt(task:str,subtasks:list[dict]) -> str:
+def create_user_prompt(task: str, subtasks: list[dict]) -> str:
     subtask_text = ""
     for st in subtasks:
         subtask_text += f"- {st['id']}:{st['title']}\n"
@@ -74,39 +77,49 @@ def create_user_prompt(task:str,subtasks:list[dict]) -> str:
 - JSON形式のみで出力してください
 """
 
-def parse_estimator_result(llm_output:str)->EstimatorResult:
+def parse_estimator_result(llm_output: str) -> EstimatorResult:
     start = llm_output.find("{")
-    end = llm_output.rfind("}")+1
+    end = llm_output.rfind("}") + 1
 
-    if start == -1 or end ==0:
+    if start == -1 or end == 0:
         raise ValueError("JSONが見つかりません。")
     json_str = llm_output[start:end]
     data = json.loads(json_str)
     return EstimatorResult(**data)
 
-def estimate(state: dict) -> dict[str,Any]:
+def estimate(state: dict) -> dict[str, Any]:
     try:
-        task=state["original_task"]
-        sub_tasks=state.get("subtasks",[])
+        task = state["original_task"]
+        sub_tasks = state.get("subtasks")
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature=0.0
+        # Nullガード: 前のノード(decomposer)が失敗していたらスキップ
+        if not sub_tasks:
+            logger.warning("[estimator] subtasksがNullのためスキップ")
+            return {"estimates": None, "error": "前段(decomposer)が失敗したためスキップ"}
+
+        llm = ChatBedrock(
+            model_id=settings.BEDROCK_MODEL_ID,
+            region_name=settings.AWS_REGION,
+            model_kwargs={
+                "max_tokens": 2000,
+                "temperature": 0.0,
+            },
         )
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=create_user_prompt(task,sub_tasks))
+            HumanMessage(content=create_user_prompt(task, sub_tasks))
         ]
 
         response = llm.invoke(messages)
         result = parse_estimator_result(response.content)
         return {
-            "estimates":[st.model_dump()for st in result.estimates],
-            "total_minutes": result.total_minutes 
+            "estimates": [st.model_dump() for st in result.estimates],
+            "total_minutes": result.total_minutes
         }
     except json.JSONDecodeError as e:
+        logger.error("[estimator] JSONパースエラー: %s", e, exc_info=True)
         return {"estimates": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        logger.error("[estimator] 見積もりエラー: %s", e, exc_info=True)
         return {"estimates": None, "error": f"見積もりエラー: {e}"}

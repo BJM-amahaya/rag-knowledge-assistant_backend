@@ -1,11 +1,14 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
+import json
+import logging
+from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel,Field
+from pydantic import BaseModel, Field
 from app.config import settings
 from typing import Any
-import json
 
-SYSTEM_PROMPT="""あなたはスケジュールの専門家です。
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """あなたはスケジュールの専門家です。
 サブタスクリストを分解して、最適な実行スケジュールを作成します。
 
 ## スケジューリングルール
@@ -43,35 +46,35 @@ SYSTEM_PROMPT="""あなたはスケジュールの専門家です。
 """
 
 class ScheduledTask(BaseModel):
-    subtask_id: str=Field(
+    subtask_id: str = Field(
         description="サブタスク固有ID（例: subtask_1）"
     )
-    scheduled_date: str=Field(
+    scheduled_date: str = Field(
         description="予定日(例:2026-01-24)"
     )
-    scheduled_time: str=Field(
+    scheduled_time: str = Field(
         description="開始時刻(例:09:00)"
     )
-    duration_minutes: int=Field(
+    duration_minutes: int = Field(
         description="所要時間(分)"
     )
 
 class SchedulerResult(BaseModel):
-    schedule:list[ScheduledTask]=Field(
+    schedule: list[ScheduledTask] = Field(
         description="スケジュールされたタスクのリスト"
     )
-    total_days:int=Field(                                                                                                                                              
-        description="全体の所要日数"                                                                                                                                   
-    )                                                                                                                                                                 
-    warnings:list[str]=Field(                                                                                                                                          
-        description="注意事項・警告メッセージ"                                                                                                                         
+    total_days: int = Field(
+        description="全体の所要日数"
+    )
+    warnings: list[str] = Field(
+        description="注意事項・警告メッセージ"
     )
 
-def create_user_prompt(task,subtasks,estimates,priorities) -> str:
+def create_user_prompt(task, subtasks, estimates, priorities) -> str:
     estimates_map = {e["subtask_id"]: e for e in estimates}
-    priorities_map = {e["subtask_id"]: e for e in priorities} 
+    priorities_map = {e["subtask_id"]: e for e in priorities}
 
-    subtask_text=""
+    subtask_text = ""
     for st in subtasks:
         est = estimates_map.get(st["id"])
         pri = priorities_map.get(st["id"])
@@ -84,7 +87,7 @@ def create_user_prompt(task,subtasks,estimates,priorities) -> str:
         subtask_text += f"  - 見積もり: {minutes}分\n"
         subtask_text += f"  - 優先度: {priority}\n"
         subtask_text += f"  - 依存: {deps}\n"
-    
+
     return f"""以下のサブタスクのスケジュールを作成してください。
 ## 元のタスク
 {task}
@@ -98,46 +101,58 @@ def create_user_prompt(task,subtasks,estimates,priorities) -> str:
 - JSON形式のみで出力してください
 """
 
-def parse_scheduler_result(llm_output:str)->SchedulerResult:
+def parse_scheduler_result(llm_output: str) -> SchedulerResult:
     start = llm_output.find("{")
-    end = llm_output.rfind("}")+1
+    end = llm_output.rfind("}") + 1
 
-    if start == -1 or end ==0:
+    if start == -1 or end == 0:
         raise ValueError("JSONが見つかりません。")
     json_str = llm_output[start:end]
     data = json.loads(json_str)
     return SchedulerResult(**data)
 
 
-def schedule(state:dict) -> dict[str,Any]:
+def schedule(state: dict) -> dict[str, Any]:
 
     try:
+        logger.info("[scheduler] 開始")
         task = state["original_task"]
-        subtasks = state.get("subtasks",[])
-        estimates = state.get("estimates",[])
-        priorities = state.get("priorities",[])
+        subtasks = state.get("subtasks")
+        estimates = state.get("estimates")
+        priorities = state.get("priorities")
 
-        llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=settings.GOOGLE_API_KEY,
-                temperature=0.0
-                
-                )
-        
+        # Nullガード: 前のノードが失敗していたらスキップ
+        if not subtasks or not estimates or not priorities:
+            logger.warning("[scheduler] subtasks/estimates/prioritiesのいずれかがNullのためスキップ")
+            return {"schedule": None, "error": "前段のエージェントが失敗したためスキップ"}
+
+        llm = ChatBedrock(
+            model_id=settings.BEDROCK_MODEL_ID,
+            region_name=settings.AWS_REGION,
+            model_kwargs={
+                "max_tokens": 2000,
+                "temperature": 0.0,
+            },
+        )
+
         messages = [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=create_user_prompt(task,subtasks,estimates,priorities))
-                ]
-    
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=create_user_prompt(task, subtasks, estimates, priorities))
+        ]
+
+        logger.info("[scheduler] LLM呼び出し開始")
         response = llm.invoke(messages)
+        logger.info("[scheduler] LLM応答受信: %d文字", len(response.content))
         result = parse_scheduler_result(response.content)
+        logger.info("[scheduler] パース完了")
         return {
-                "schedule":[st.model_dump()for st in result.schedule],
-                "total_days":result.total_days,
-                "warnings":result.warnings
-                }
+            "schedule": [st.model_dump() for st in result.schedule],
+            "total_days": result.total_days,
+            "warnings": result.warnings
+        }
     except json.JSONDecodeError as e:
+        logger.error("[scheduler] JSONパースエラー: %s", e, exc_info=True)
         return {"schedule": None, "error": f"JSONパースエラー: {e}"}
     except Exception as e:
+        logger.error("[scheduler] エラー: %s", e, exc_info=True)
         return {"schedule": None, "error": f"スケジューリングエラー: {e}"}
-

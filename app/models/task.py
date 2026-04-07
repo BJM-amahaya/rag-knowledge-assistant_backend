@@ -13,7 +13,7 @@ class TaskRequest(BaseModel):
 class TaskResponse(BaseModel):
     id: str = Field(description="タスクの一意なID")
     task: str = Field(description="タスクの内容")
-    status: str = Field(description="処理ステータス", examples=["completed"])
+    status: str = Field(description="処理ステータス", examples=["completed", "failed"])
 
     analysis: Optional[dict[str, Any]] = Field(default=None, description="タスク分析結果")
     subtasks: Optional[list[dict[str, Any]]] = Field(default=None, description="サブタスク一覧")

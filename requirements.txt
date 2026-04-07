@@ -5,16 +5,11 @@ uvicorn>=0.30.0
 # ===== AI/LLM連携 =====
 langchain>=0.3.0
 langchain-community>=0.3.0
-langchain-google-genai>=2.0.0
-langchain-anthropic>=0.3.0
+langchain-aws>=0.2.0
 langchain-core>=0.3.0
 
-# ===== ベクトルDB =====
-chromadb>=0.5.0
-
-# ===== API連携 =====
-google-generativeai>=0.8.0
-anthropic>=0.40.0
+# ===== AWS SDK =====
+boto3>=1.34.0
 
 # ===== 設定・ユーティリティ =====
 python-dotenv>=1.0.0
@@ -24,3 +19,10 @@ pydantic-settings>=2.6.0
 # ===== ファイル処理 =====
 python-multipart>=0.0.18
 pypdf>=5.0.0
+
+# ===== グラフ =====
+langgraph>=0.2.0
+
+# ===== Lambda対応 =====
+mangum                       # Lambda ⇔ ASGI 変換
+python-jose[cryptography]    # JWT 検証（Cognito トークン）

@@ -1,5 +1,6 @@
 from fastapi import APIRouter,WebSocket,WebSocketDisconnect
 from app.services.task_service import process_task_streaming
+import asyncio
 import json
 
 class ConnectionManager:
@@ -49,16 +50,29 @@ async def websocket_endpoint(websocket:WebSocket,task_id:str):
                         "type":"progress",
                         "data":chunk
                     }))
-                result = await process_task_streaming(
-                    task_id=task_id,
-                    task=task,
-                    callback=on_progress
-                )
-
-                await manager.broadcast(task_id,json.dumps({
-                    "type":"complete",
-                    "data":result
-                }))
+                try:
+                    result = await asyncio.wait_for(
+                        process_task_streaming(
+                            task_id=task_id,
+                            task=task,
+                            callback=on_progress
+                        ),
+                        timeout=200
+                    )
+                    await manager.broadcast(task_id,json.dumps({
+                        "type":"complete",
+                        "data":result
+                    }))
+                except asyncio.TimeoutError:
+                    await manager.broadcast(task_id,json.dumps({
+                        "type":"error",
+                        "data":{"message":"処理がタイムアウトしました（200秒）"}
+                    }))
+                except Exception as e:
+                    await manager.broadcast(task_id,json.dumps({
+                        "type":"error",
+                        "data":{"message":f"処理エラー: {str(e)}"}
+                    }))
 
     except WebSocketDisconnect:
         manager.disconnect(websocket,task_id)
